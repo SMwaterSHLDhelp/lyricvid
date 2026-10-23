@@ -1,0 +1,38 @@
+# work dirs (default is <out>/_work_<name>/)
+_work_*/
+**/_work_*/
+
+# media
+*.mp3
+*.wav
+*.flac
+*.aac
+*.m4a
+*.ogg
+*.opus
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+
+# caches and python artifacts
+.cache/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# virtualenvs
+.venv/
+venv/
+env/
+dm/
