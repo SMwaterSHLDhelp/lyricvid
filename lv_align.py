@@ -23,13 +23,28 @@ def norm(w):
     w = "".join(NUM.get(c, c) for c in w)
     return re.sub(r"[^a-z]", "", w)
 
+def emission_chunks(n_samples, rate=16000, chunk_s=30, min_tail=None):
+    """Chunk boundaries for MMS emissions.
+
+    A final piece shorter than `min_tail` samples (default: 1 second) is merged into
+    the previous chunk. A tail under a second used to be sent to the model on its own
+    and the aligner crashed."""
+    if n_samples <= 0: return []
+    if min_tail is None: min_tail = rate
+    C = int(rate * chunk_s)
+    starts = list(range(0, int(n_samples), C))
+    if len(starts) > 1 and int(n_samples) - starts[-1] < min_tail: starts.pop()
+    ends = starts[1:] + [int(n_samples)]
+    return list(zip(starts, ends))
+
 def force_align(vocals, lyric_lines):
     import torch
     from torchaudio.pipelines import MMS_FA as bundle
     model = bundle.get_model(with_star=False).eval(); tok = bundle.get_tokenizer(); aligner = bundle.get_aligner()
     a = load_mono(vocals, 16000); wav = torch.from_numpy(a)[None]
     with torch.inference_mode():
-        em = torch.cat([model(wav[:, i:i + 16000 * 30])[0][0] for i in range(0, wav.shape[1], 16000 * 30)])
+        chunks = emission_chunks(wav.shape[1])
+        em = torch.cat([model(wav[:, s0:s1])[0][0] for s0, s1 in chunks])
     ratio = wav.shape[1] / 16000 / em.shape[0]
     words, owner = [], []
     for li, (_, line) in enumerate(lyric_lines):

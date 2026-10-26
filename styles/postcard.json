@@ -1,0 +1,29 @@
+{
+  "description": "Declarative paper postcard: warm sheet, centred handwriting, slow drift.",
+  "style": {
+    "bg_size": [960, 540],
+    "layout": "center",
+    "kinetic": "wave",
+    "text_y": 0.5,
+    "upper": false,
+    "size": 68,
+    "hook_size": 76,
+    "text": [42, 30, 24],
+    "sung": [122, 64, 36],
+    "band": 0.25,
+    "band_color": [236, 220, 196],
+    "shadow": false,
+    "punch": 0.006,
+    "shake": 0.3,
+    "wave": 5,
+    "fade_in": 0.9,
+    "fonts": {
+      "lyric": ["PatrickHand-Regular", "DejaVuSans"],
+      "title": ["PatrickHand-Regular", "DejaVuSans"],
+      "mono": ["IBMPlexMono-Regular", "DejaVuSansMono"]
+    }
+  },
+  "background": {"block": "paper", "tint": [236, 220, 196], "speckle": 9, "seed": 3},
+  "camera": {"block": "drift", "drift": 7, "rot": 0.3},
+  "overlay": [{"block": "vignette", "amount": 0.3}]
+}

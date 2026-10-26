@@ -1,88 +1,158 @@
 ---
 name: lyricvid
-description: Turn a finished song (audio + known lyrics) into a beat-synced, word-accurate, photosensitive-safe lyric/music video (1080p30 H.264+AAC). Use when asked for a lyric video, karaoke video or music video for a generated or provided song.
+description: Turn a finished song (audio + known lyrics) into a beat-synced, word-accurate, photosensitive-safe lyric video. Invent a new visual style for each song, or illustrate each lyric line as its own scene. Use when asked for a lyric video, karaoke video, or music video for a generated or provided song.
 ---
 
-# lyricvid: audio + lyrics + style preset → music video
+# lyricvid
 
-Single CLI: `lyricvid.py` (in this folder). Every stage is cached in a work dir, so re-runs only redo what changed.
+Single CLI: `lyricvid.py` in this folder. Stages are cached in a work dir.
 
-## Requirements / installs (Linux box, CPU is fine)
+The job is not "pick doompop". Read the song and invent the picture. The files in `presets/`, `scenes/`, and `styles/` are examples of the API. `docs/styles_log.md` lists looks that already exist. A new video has to be deliberately different from every row in that log, especially the ink / bone / orange HUD (`doompop`, `contextwindow`).
+
+Two first-class modes:
+
+1. **One style for the song** — a preset of about 50–150 lines, built from `lv_blocks.py`.
+2. **One scene per lyric line** — a scene file. Each line gets a small illustration that acts the line out, crossfaded when the line changes. This is the mode to use when the lyrics are concrete (objects, numbers, places, machines). The reference shape is `scenes/normaltech.py`: near-black, amber and cyan line-art with bloom, bold all-caps karaoke in the bottom third, key words in the accent, glowing section titles, objects that draw on, a slow push-in, no full-frame flashes.
+
+Read `docs/STYLE_GUIDE.md` and follow it. Record the finished look in `docs/styles_log.md`.
+
+## Requirements
+
 - ffmpeg + ffprobe on PATH (libx264, aac, libmp3lame).
-- Python 3.11+ venv with: `torch torchaudio` (CPU builds OK), `demucs`, `librosa`, `numpy`, `pillow`.
-  ```
-  python -m venv dm && dm/bin/python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-  dm/bin/python -m pip install demucs librosa pillow numpy
-  ```
-  (Some venvs have no `bin/pip`; always use `python -m pip`.)
-- First run downloads htdemucs (~80 MB) and torchaudio MMS_FA (~1.2 GB, cached in `~/.cache/torch/hub/checkpoints`).
-- Fonts: presets look up TTFs/OTFs by file name (e.g. ArchivoBlack-Regular, IBMPlexMono-Medium). Search order is each `--font-dir` (repeatable), then `LYRICVID_FONT_DIRS` (path-separator separated), then the standard system and user font directories (`/usr/share/fonts`, `/usr/local/share/fonts`, `~/.fonts`, `~/.local/share/fonts` on Linux; the usual Library/Fonts and Windows Fonts dirs elsewhere). Install the faces a preset names, or edit the preset.
+- Full render: Python 3.11+ with torch, torchaudio, demucs, librosa, numpy, pillow. CPU torch is enough.
+- Preview, lint, gallery, and `tests/test_lyricvid.py` need numpy, pillow, and ffmpeg only.
+- Fonts: `python3 scripts/install_fonts.py`, or `--font-dir`. Search order is `--font-dir`, `LYRICVID_FONT_DIRS`, `fonts/`, then system fonts. Name a fallback in `STYLE["fonts"]`.
 
-## Lyrics file format
-Plain text, section tags in brackets, one sung line per row, blank lines ignored:
+## Lyrics file
+
 ```
 [verse]
 first line
 [chorus]
-...
-[instrumental fade out]   <- tags with no lines are fine
+hook line
 ```
-Only the KNOWN sung text belongs here: no stage directions, and repeated sections written out in full in sung order.
 
-## Usage
+Known sung text only. Repeated sections written out in order.
+
+## Commands
+
 ```
-# full pipeline
-dm/bin/python lyricvid.py run --audio song.mp3 --lyrics song.txt --preset doompop \
-    --title "Song Title" --bpm 132 --out /path/videos/Song.mp4 --workers 4 \
-    --stills 5,30,60,90,120,150
-# only alignment (inspect onset report before rendering)
-dm/bin/python lyricvid.py align --audio song.mp3 --lyrics song.txt --work /tmp/song_work
-# re-render a few frames after editing a preset (fast iteration)
-dm/bin/python lyricvid.py stills --job <work>/job.json --times 12,40,95
-# render a 30s test clip
-... run ... --test 40:70
-# gate an existing video
-dm/bin/python lyricvid.py check --video Song.mp4 --audio song.mp3
+python3 lyricvid.py presets
+python3 lyricvid.py lint --preset path/to/mystyle.py
+python3 lyricvid.py preview --preset scenes/normaltech.py
+python3 lyricvid.py gallery --out docs/gallery
+python3 lyricvid.py run --audio song.mp3 --lyrics song.txt --preset path/to/mystyle.py \
+    --title "Song Title" --bpm 132 --out videos/Song.mp4 --workers 4 --stills 8,24,40,70
+python3 lyricvid.py run --audio song.mp3 --lyrics song.txt --preset lineart \
+    --scenes path/to/scenes.py --title "Song Title" --out videos/Song.mp4
+python3 lyricvid.py align --audio song.mp3 --lyrics song.txt --work /tmp/song_work
+python3 lyricvid.py stills --job <work>/job.json --times 12,40,95
+python3 lyricvid.py check --video Song.mp4 --audio song.mp3
 ```
-Work dir defaults to `<out dir>/_work_<name>/` and holds `sep/` (stems), `lines.json` (word timings), `onset_check.json`, `beats.json`, `job.json`, `stills/sheet.png` and `check.json`.
-`--realign` forces alignment and beats to be redone.
 
-## Pipeline steps
-1. **Separate**: Demucs htdemucs `--two-stems vocals` → `vocals.wav`, `no_vocals.wav`.
-2. **Align**: torchaudio MMS_FA (wav2vec2 CTC) forced alignment of the normalised known lyric words to the vocal stem (emissions in 30s chunks). Output is per-word `[word, start, end]` and per-line `s/e`.
-3. **Onset check**: per line, the strongest 10ms RMS rise within ±0.5s of the aligned start. `gap` lines (silence before) are verifiable, `legato` lines are not. Lines flagged `<-- check` (gap and |Δ|>0.25s) need a listen.
-4. **Beats**: librosa onset envelope. With `--bpm`, a fixed grid is phase-fitted (best for generated music with a known tempo); otherwise librosa beat_track. Downbeat phase comes from the low-band (kick) flux. A per-frame onset curve is included for reactive motion.
-5. **Render**: `lv_render.Ctx` renders `ceil(dur*fps)` frames (so the video is never short). Parallel segments, each piped to libx264 (CRF 21, yuv420p).
-6. **Mux**: concat segments, add the audio as AAC 192k, `-t <audio duration>` on both, `+faststart`.
-7. **Check**: video and audio stream durations vs. the source (±1 frame), WCAG flash analysis (`lv_flash.py`), file size, and a contact sheet of stills.
+`--preset` accepts a preset name, a `.py` path (`class Preset`, or a scene module), or a `.json` / `.yaml` spec. `--preset-opts key=value` overrides STYLE (repeatable, commas allowed). `--scenes` selects the scene file when the preset is `lineart`.
 
-## Presets (`presets/<name>.py`)
-A preset exposes `class Preset(ctx)` with `STYLE` (fonts, colours, sizes, `unsung_alpha`, `punch`, `shake`, `text_y`, `fade_out`, `bg_size`) and hooks: `background(t, st)`, `camera(t, st) -> (dx, dy, zoom, rot)`, optional `overlay(img, t, st)`.
-`st` = beat state (beat index, time since beat, downbeat, bar, section, hook flag, pulse, onset).
-`ctx.word_events[word]` lists the sung start times of every word, so visuals can bind to words ("click", "accept").
-- `minimal`: dark background, centred karaoke lines, gentle beat zoom. A template.
-- `doompop`: "AI doom pop / Claude-pop" code-rendered look. Ink #0A0A0B, bone #EEE9DF type, a single signal orange #FF4D12. Archivo Black lyrics, IBM Plex Mono HUD. Hairline grid, orange spark with trail, HUD (BPM/BAR/BEAT + a rising risk meter), downbeat reframes. Section scenes: prompt typing (intro), scrolling diffs (verse), accumulating diff blocks (pre-chorus), giant button pressed on beats with rings (chorus), logs plus a smiley mask (bridge), idle UI (outro).
-To make a new style, copy `minimal.py` and edit. Keep text in the lower band (`text_y`) and leave the centre for the scene.
+`lint` renders a synthetic clip and exits 1 on a flash or a contrast failure. Fix the preset until it passes. Do not deliver a video that fails `check`.
 
-## Quality checks (do all before delivering)
-- Read `onset_check.json` and listen to or spot-check flagged lines. Make a table of ≥10 timestamps: lyric, aligned time, onset.
-- Verify the last sung line is aligned to real vocal energy (1s RMS of the vocal stem). If the aligner pushes lines into a silent tail, the take dropped lyrics: pick another take.
-- `check.json`: `duration_ok` true, `flash.passed` true with 0 flashes and 0 red-flash frames, size under budget.
-- Look at `stills/sheet.png`: readable lyrics, nothing off-frame, title not overlapping lyrics.
-- Ending: audio fades naturally (last 5s RMS well below the body), and the video fades to black over `fade_out` s.
+## Pipeline
 
-## Photosensitivity (WCAG 2.3.1 / Harding)
-- `lv_flash.py` counts a transition when >25% of the frame changes relative luminance by >0.1 and the darker state is <0.8. A flash is a pair of opposing transitions. Limit: ≤3/s. The goal is 0.
-- Never flash or invert on beats. Do colour changes as ≥0.6s crossfades, at most once per bar.
-- Avoid saturated full-screen red. Keep shake moderate (≤2px at 720p bg) and zoom punches ≤3%.
+1. Demucs htdemucs `--two-stems vocals`.
+2. MMS_FA forced alignment of the known words to the vocal stem. 30 s emission chunks; a tail shorter than 1 s merges into the previous chunk.
+3. Onset check. `gap` lines with |Δ| > 0.25 s are flagged `<-- check`.
+4. Beat grid (fixed BPM phase-fit, or librosa) plus per-frame `rms`, `bass`, `mid`, `high`.
+5. Parallel frame render. `lv_safety.Guard` clamps every frame.
+6. Concat, AAC, trim to the audio duration.
+7. Duration check and `lv_flash.py`. Goal: 0 flashes, 0 red-flash frames.
 
-## Pitfalls learned
-- Whisper word timestamps are unreliable on sung/generated vocals. Use forced alignment of the known lyrics to the Demucs vocal stem.
-- Fricative onsets (f/s/sh) make the energy check read ~0.3–0.4s "late" even when alignment is right. Verify by ear before moving lines.
-- A frame count of `round(dur*fps)` or a beat array one frame short gives a video 0.03–0.04s shorter than the audio. Render `ceil(dur*fps)` frames, clamp beat indices, mux with `-t`.
-- Shake and zoom can produce negative crop boxes. Clamp them and keep a base zoom (~1.06).
-- Word "pop" scaling collides with neighbours: pop vertically only, and anchor glyphs on a shared baseline (`anchor="ls"`, font metrics).
-- Light/cream backgrounds hurt lyric readability. Put a dark band behind the text.
-- Show unsung words dimmed (30–40%) so lines don't jump off-centre while being revealed.
-- For generated songs: render longer than the target (e.g. +10s) and trim with a 5–7s fade so the song never cuts off. Reject takes whose vocals end early or whose lyrics run past the trim point.
-- Large file copies to a remote laptop can fail. Keep outputs on the build machine unless asked.
+## How to design the video
+
+Do this before writing pixels.
+
+1. Read the lyrics, the BPM, and the mood. Note concrete nouns (a shelf, a year, a crowd, a lamp) and the section map.
+2. Read `docs/styles_log.md`. Name the look you are refusing to repeat.
+3. Choose a mode.
+   - Concrete, line-by-line images, or the brief asks for illustrated scenes: write a scene file. For each lyric line, write down the object that line literally depicts, then a `draw` function. Match lines with `contains`, `section`, or `index`. List `keywords` (the words that should wear the accent) and `SECTION_TITLES`. Use `lv_art` primitives. Pass progress `u` into draw-on, trace, and count-up. Keep drawings in the upper two thirds (`safe_stage`). Crossfade stays ≥ 0.6 s. Camera is a slow push, already applied by `SceneShow`.
+   - One atmosphere for the whole song: write a preset. Pick palette, type, layout, kinetic, and one motion idea. Use `lv_blocks`. Let audio move size or position through `AudioFollow` or `Slew` (0.6 s or slower on anything large). Bind one repeated lyric word to `word_hit` / `ctx.word_events`.
+4. `python3 lyricvid.py lint --preset <path>`. Read the still it implies by running `stills` or `gallery` logic: open a frame and check that the sung line is readable and that the picture matches that line.
+5. Iterate. Then append a row to `docs/styles_log.md` (palette, type, layout, motion, and what it must not be confused with).
+
+`scenes/normaltech.py` is the line-art worked example. `presets/paperboats.py` is the whole-song worked example. `styles/desk.json` and `styles/postcard.json` are the no-Python versions.
+
+## Preset API
+
+```python
+class Preset:
+    DESCRIPTION = "one line"
+    STYLE = dict(
+        bg_size=(960, 540),
+        fonts=dict(lyric=["Outfit[wght]@Bold", "DejaVuSans-Bold"],
+                   title=["Outfit[wght]@Bold", "DejaVuSans-Bold"],
+                   mono=["IBMPlexMono-Regular", "DejaVuSansMono"]),
+        text=(230, 234, 240), sung=(255, 214, 120),
+        layout="lower",   # lower, center, karaoke, scatter, stack
+        kinetic="wave",   # pop, none, slide, type, scale, rotate, wave
+        text_y=0.8, size=64, hook_size=76,
+        band=0.4, unsung_alpha=0.4,
+        punch=0.01, shake=0.6, fade_in=0.8,
+    )
+    def __init__(self, ctx): ...
+    def background(self, t, st): ...   # RGBA at bg_size
+    def camera(self, t, st): ...       # (dx, dy, zoom, rot)
+    def overlay(self, img, t, st): ... # optional
+```
+
+`st` includes `t`, `k`, `dt`, `down`, `bar`, `bar_phase`, `sec`, `hook`, `pulse`, `on`, `rms`, `bass`, `mid`, `high`.
+
+Pop only scales vertically. Horizontal scale is clamped to ≤ 1. Slots use unscaled widths. A highlighted word must not touch the next word.
+
+Useful STYLE keys: `keyword`, `keywords`, `glow`, `stroke`, `shadow`, `section_card`, `section_hold`, `section_color`, `ransom` with `lyric_b` / `lyric_c`, `karaoke_ahead`, `lead`, `line_fade`, `title_card`, `title_mode`.
+
+## Scene API
+
+```python
+DESCRIPTION = "..."
+LYRICS = "examples/song.txt"   # optional, used by preview and gallery
+CROSSFADE = 0.7
+PALETTE = dict(bg=(6, 7, 11), line=(220, 226, 232), amber=(255, 176, 48), cyan=(72, 216, 226))
+SECTION_TITLES = {"verse": "the shelf", "chorus": "build"}
+
+def draw_shelf(board, ctx, line, u, st):
+    x0, y0, x1, y1 = safe_stage(board)
+    shelf(board, x0, y0 + 80, 280, u)
+    medal(board, x0 + 80, y0 + 40, 26, u)
+
+SCENES = [
+    {"contains": "shelf", "draw": draw_shelf, "keywords": ["prize", "shelf"]},
+    {"contains": "year", "template": "calendar", "keywords": ["year"]},
+]
+```
+
+Match priority: `index`, then `contains`, then `section`, otherwise the HUD template. JSON `"mode": "scenes"` uses the same fields with `template` names from `lv_art.TEMPLATES` (`rays`, `medal_bars`, `calendar`, `robots`, `curve`, `crowd`, `terminal`, `hud`, `sign`, `buildings`).
+
+The lyric band is drawn by the renderer, in the bottom third, all caps for this style. Do not also draw the lyric line inside the scene. Key words listed on the scene are drawn in `keyword` (cyan in the example). Section titles ease in and out; only the current section is shown.
+
+Primitives (each takes a progress `u` for draw-on / trace / count-up): `arrow`, `sun_rays`, `building`, `person`, `crowd`, `robot`, `shelf`, `medal`, `bar_chart`, `line_chart`, `diminish_curve`, `clock`, `calendar`, `hud_rings`, `terminal`, `neon_sign`, `network`, plus `board.line`, `board.circle`, `board.rect`, `board.text`, `board.label`, `board.count_up`. `Board.finish` blooms the glow layer.
+
+## Blocks
+
+`lv_blocks.py`: `fill`, `linear_gradient`, `radial_gradient`, `aurora`, `paper`, `vignette`, `grain`, `scanlines`, `wobble`, `halftone`, `draw_grid`, `paint_sun`, `boxes`, `meters`, `Field`, `Slew`, `AudioFollow`, `word_hit`, `camera_still`, `camera_drift`, `soft_blob`.
+
+Grain, halftone, and speckle should be static (seeded once), not a new random field every frame. Large colour or size changes go through a slew of at least 0.6 s.
+
+## Photosensitivity
+
+- Goal: 0 flashes and 0 red-flash frames. `lint` is the gate.
+- No beat flashes, no full-frame inversion, no strobing opacity.
+- Colour crossfades ≥ 0.6 s. Scene crossfade is forced to at least 0.6 s.
+- Saturated red only as a small static mark. The guard clamps the red fraction and blends an opposing transition inside 20 frames.
+- Light presets need `fade_in` ≥ 0.8 so the opening is not a white flash.
+- Shake stays small. Zoom punches stay around 1–2%.
+
+## Before delivering
+
+- `onset_check.json`: listen to flagged lines. Fricatives (f, s, sh) often look 0.3–0.4 s "late" when the alignment is right.
+- Last sung line sits on real vocal energy, not a silent tail.
+- `check.json`: `duration_ok`, `flashes` 0, `red_flash_frames` 0.
+- Stills: the lyric line is readable, words are separated, the picture matches the line, the section title does not cover the lyric.
+- Ending fades. Do not cut mid-phrase.
+- `docs/styles_log.md` has a new row.

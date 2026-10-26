@@ -21,11 +21,12 @@ def check(path, w=320, h=180, fps=30):
             ev.append(1 if up > 0.25 else (-1 if dn > 0.25 else 0))
             red.append(bool((rd != prevred).mean() > 0.25)); md.append(float(abs(Y.mean() - prev.mean())))
         prev, prevred = Y, rd
-    ev = np.array(ev); idx = np.nonzero(ev)[0]; sg = ev[idx]
+    ev = np.array(ev); idx = np.nonzero(ev)[0] if len(ev) else np.array([], dtype=int); sg = ev[idx] if len(ev) else ev
     fl = [int(idx[i]) for i in range(1, len(idx)) if sg[i] != sg[i - 1]]
     mx = max([sum(1 for x in fl if s <= x < s + fps) for s in range(len(ev))] + [0])
-    r = dict(frames=len(ev) + 1, transitions=int(len(idx)), flashes=len(fl), max_flashes_per_s=mx,
-             red_flash_frames=int(sum(red)), mean_dY=round(float(np.mean(md)), 5), max_dY=round(float(np.max(md)), 4),
+    r = dict(frames=int(len(ev) + 1), transitions=int(len(idx)), flashes=len(fl), max_flashes_per_s=mx,
+             red_flash_frames=int(sum(red)), mean_dY=round(float(np.mean(md)) if md else 0.0, 5),
+             max_dY=round(float(np.max(md)) if md else 0.0, 4),
              passed=bool(mx <= 3 and sum(red) == 0))
     return r
 

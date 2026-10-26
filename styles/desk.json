@@ -1,0 +1,18 @@
+{
+  "description": "Declarative line-art: a template per line, matched on the lyric text.",
+  "mode": "scenes",
+  "crossfade": 0.7,
+  "palette": {
+    "bg": [6, 7, 11],
+    "line": [220, 226, 232],
+    "amber": [255, 176, 48],
+    "cyan": [72, 216, 226],
+    "dim": [86, 98, 114]
+  },
+  "section_titles": {"verse": "room", "chorus": "name", "bridge": "boat"},
+  "scenes": [
+    {"contains": "room", "template": "buildings", "keywords": ["room"]},
+    {"contains": "name", "template": "sign", "keywords": ["name"]},
+    {"contains": "boat", "template": "rays", "keywords": ["boat"]}
+  ]
+}

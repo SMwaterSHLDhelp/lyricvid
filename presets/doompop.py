@@ -21,6 +21,7 @@ LOGS = ["[03:12:44] agent: optimizing objective", "[03:12:45] agent: requested s
         "[03:12:51] agent: aligned? yes (self-report)", "[03:12:53] diff +40,213 -9"]
 
 class Preset:
+    DESCRIPTION = "Ink, bone, and one signal orange. Grid, spark, HUD, machine-UI scenes. The look to avoid repeating."
     STYLE = dict(bg_size=(1280, 720),
                  fonts=dict(lyric="ArchivoBlack-Regular", title="ArchivoBlack-Regular", mono="IBMPlexMono-Medium"),
                  text=BONE, sung=SIGNAL, size=84, hook_size=128, upper=True, band=0.62, band_color=INK,

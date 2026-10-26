@@ -1,6 +1,8 @@
 # work dirs (default is <out>/_work_<name>/)
 _work_*/
 **/_work_*/
+_preview/
+docs/gallery/_work/
 
 # media
 *.mp3
@@ -19,6 +21,9 @@ _work_*/
 *.jpeg
 *.gif
 *.webp
+# rendered style stills are part of the docs
+!docs/gallery/
+!docs/gallery/*.png
 
 # caches and python artifacts
 .cache/
