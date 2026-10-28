@@ -48,7 +48,10 @@ python3 lyricvid.py run --audio song.mp3 --lyrics song.txt --preset lineart \
 python3 lyricvid.py align --audio song.mp3 --lyrics song.txt --work /tmp/song_work
 python3 lyricvid.py stills --job <work>/job.json --times 12,40,95
 python3 lyricvid.py check --video Song.mp4 --audio song.mp3
+python3 lyricvid.py remux --video Song.mp4 --audio song.wav --out Song_norm.mp4 [--no-flash]
 ```
+
+Loudness: `run` and `remux` normalize the audio at mux with two-pass ffmpeg `loudnorm` to YouTube's -14 LUFS integrated, -1 dBTP true peak, LRA 11 (raised to the song's own LRA so the gain stays linear), resampled to 48 kHz, AAC 320 kbps. `--loudness -16` changes the target, `--loudness off` keeps the source level, `--true-peak -2` lowers the ceiling. The source file is only read. `remux` replaces the audio of a finished video without re-rendering (video stream copied).
 
 `--preset` accepts a preset name, a `.py` path (`class Preset`, or a scene module), or a `.json` / `.yaml` spec. `--preset-opts key=value` overrides STYLE (repeatable, commas allowed). `--scenes` selects the scene file when the preset is `lineart`.
 
@@ -61,8 +64,8 @@ python3 lyricvid.py check --video Song.mp4 --audio song.mp3
 3. Onset check. `gap` lines with |Δ| > 0.25 s are flagged `<-- check`.
 4. Beat grid (fixed BPM phase-fit, or librosa) plus per-frame `rms`, `bass`, `mid`, `high`.
 5. Parallel frame render. `lv_safety.Guard` clamps every frame.
-6. Concat, AAC, trim to the audio duration.
-7. Duration check and `lv_flash.py`. Goal: 0 flashes, 0 red-flash frames.
+6. Concat, two-pass loudnorm (-14 LUFS / -1 dBTP), 48 kHz AAC 320k, trim to the audio duration.
+7. Duration check, source and final loudness, and `lv_flash.py`. Goal: 0 flashes, 0 red-flash frames.
 
 ## How to design the video
 
@@ -152,7 +155,7 @@ Grain, halftone, and speckle should be static (seeded once), not a new random fi
 
 - `onset_check.json`: listen to flagged lines. Fricatives (f, s, sh) often look 0.3–0.4 s "late" when the alignment is right.
 - Last sung line sits on real vocal energy, not a silent tail.
-- `check.json`: `duration_ok`, `flashes` 0, `red_flash_frames` 0.
+- `check.json`: `duration_ok`, `flashes` 0, `red_flash_frames` 0, `loudness.warnings` empty (final within 1 LU of target, true peak at or below -1 dBTP).
 - Stills: the lyric line is readable, words are separated, the picture matches the line, the section title does not cover the lyric.
 - Ending fades. Do not cut mid-phrase.
 - `docs/styles_log.md` has a new row.

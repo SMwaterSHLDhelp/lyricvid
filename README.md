@@ -1,6 +1,6 @@
 # lyricvid
 
-Turn a finished song (audio plus the known lyrics) into a beat-synced, word-accurate lyric video: 1080p30 H.264 + AAC. The picture is code, not a template menu. An agent reads the song and writes a new style for it. The toolkit aligns the words, renders frames, muxes the audio, and refuses a video that flashes or fails contrast.
+Turn a finished song (audio plus the known lyrics) into a beat-synced, word-accurate lyric video: 1080p30 H.264 + AAC (normalized to YouTube loudness). The picture is code, not a template menu. An agent reads the song and writes a new style for it. The toolkit aligns the words, renders frames, muxes the audio, and refuses a video that flashes or fails contrast.
 
 `lyricvid.py` is the only command. Each stage is cached in a work directory, so a re-run only repeats what changed.
 
@@ -100,7 +100,12 @@ python3 lyricvid.py gallery --out docs/gallery
 python3 lyricvid.py align --audio song.mp3 --lyrics song.txt --work /tmp/song_work
 python3 lyricvid.py stills --job /tmp/song_work/job.json --times 12,40.5,95
 python3 lyricvid.py check --video videos/Song.mp4 --audio song.mp3
+
+# swap in YouTube-normalized audio on a finished video (no re-render)
+python3 lyricvid.py remux --video videos/Song.mp4 --audio song.wav --out videos/Song_norm.mp4
 ```
+
+`run` and `remux` take `--loudness LUFS|off` (default `-14`, YouTube's playback level) and `--true-peak DBTP` (default `-1`).
 
 `--preset-opts` is repeatable and accepts comma-separated `key=value`. Values are JSON when they parse (`text='[255, 80, 40]'` is awkward; use `text=[255,80,40]`). `#rrggbb` is accepted as a colour.
 
@@ -113,8 +118,8 @@ python3 lyricvid.py check --video videos/Song.mp4 --audio song.mp3
 3. **Onset check.** For each line, the strongest 10 ms RMS rise within ±0.5 s of the aligned start. A `gap` whose delta is larger than 0.25 s is printed with `<-- check`.
 4. **Beats.** librosa onset envelope, plus per-frame RMS and bass / mid / high bands (numpy rfft, no extra dependency). With `--bpm`, a fixed grid is phase-fitted. Downbeat phase comes from low-band flux.
 5. **Render.** `lv_render.Ctx` draws `ceil(duration * fps)` frames. Workers pipe raw frames to libx264. Every frame passes through `lv_safety.Guard`.
-6. **Mux.** Segments are concatenated, the source audio is AAC at 192 kbps, and `-t <audio duration>` trims both streams.
-7. **Check.** Stream durations against the source, the WCAG flash analysis, file size, and a contact sheet when `--stills` is set.
+6. **Mux.** Segments are concatenated and `-t <audio duration>` trims both streams. The audio is loudness-normalized in two passes with ffmpeg `loudnorm`: pass 1 measures integrated loudness, true peak, LRA and threshold; pass 2 applies them with `linear=true` (a single gain, no compression) toward -14 LUFS / -1 dBTP / LRA 11, then resamples to 48 kHz and encodes AAC at 320 kbps. If the target needs more gain than the peak allows, loudnorm falls back to dynamic mode and the log says so. The source file is never written.
+7. **Check.** Stream durations against the source, source and final loudness (`loudness` in `check.json`, with a warning when the result is more than 1 LU off target or the true peak is above the ceiling), the WCAG flash analysis, file size, and a contact sheet when `--stills` is set.
 
 ## Writing a picture
 
@@ -167,7 +172,7 @@ Before calling a video done:
 
 - Read `onset_check.json` and listen to lines flagged `<-- check`.
 - Confirm the last sung line sits on real vocal energy. If the aligner pushes words into a silent tail, that take dropped lyrics.
-- `check.json`: `duration_ok` true, `flash.passed` true, `flashes` 0, `red_flash_frames` 0.
+- `check.json`: `duration_ok` true, `flash.passed` true, `flashes` 0, `red_flash_frames` 0, `loudness.warnings` empty.
 - Stills: lyrics readable, nothing clipped, the title not sitting on the lyric line, and the picture actually showing the line that is being sung.
 - The last few seconds of audio should sit below the body of the song, and the picture fades over `fade_out`.
 

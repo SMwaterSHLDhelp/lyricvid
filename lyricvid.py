@@ -13,6 +13,10 @@ Presets are examples. The agent that uses this repo writes a new one per song
   lyricvid.py align  --audio song.mp3 --lyrics song.txt --work DIR
   lyricvid.py stills --job DIR/job.json --times 10,20,30
   lyricvid.py check  --video out.mp4 --audio song.mp3
+  lyricvid.py remux  --video old.mp4 --audio song.wav --out new.mp4   (re-mux audio, loudness-normalized)
+
+Audio is normalized to YouTube loudness at mux (two-pass loudnorm, -14 LUFS, -1 dBTP,
+LRA 11, AAC 320k, 48 kHz). --loudness off keeps the source level; --true-peak sets the ceiling.
 
 Font lookup: repeatable --font-dir, then LYRICVID_FONT_DIRS, then bundled fonts/,
 then the system font directories. scripts/install_fonts.py fetches the faces
@@ -20,7 +24,7 @@ the examples name. Missing faces fall back to DejaVu or Liberation.
 """
 import argparse, glob, json, math, os, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
-import lv_audio, lv_align, lv_flash
+import lv_audio, lv_align, lv_flash, lv_loud
 from lv_safety import GUIDANCE
 
 def log(*a): print("[lyricvid]", *a, flush=True)
@@ -87,13 +91,37 @@ def do_align(audio, lyrics, work, force=False):
         log(f"{r['s']:7.2f} onset {r['onset']:7.2f} ({r['delta']:+.2f}) {r['kind']:6s} {r['text'][:50]}{flag}")
     return lines
 
-def check(video, audio):
+def check(video, audio, loud=None, flash=True):
     pr = lambda sel: float(subprocess_duration(video, sel))
     res = dict(audio_src=lv_audio.duration(audio), video_stream=pr("v:0"), audio_stream=pr("a:0"),
                size_mb=round(os.path.getsize(video) / 1e6, 1))
     res["duration_ok"] = abs(res["video_stream"] - res["audio_src"]) <= 1 / 30 + 1e-3 and abs(res["audio_stream"] - res["audio_src"]) <= 0.03
-    res["flash"] = lv_flash.check(video)
+    if loud is not None: res["loudness"] = loudness_report(video, loud)
+    if flash: res["flash"] = lv_flash.check(video)
     return res
+
+def loudness_report(video, loud):
+    """loud: dict(target, true_peak, source) from mux_audio. Measures the muxed track and warns."""
+    rep = dict(loud); rep["final"] = lv_loud.measure(video)
+    rep["warnings"] = lv_loud.evaluate(rep["final"], loud["target"], loud["true_peak"]) if loud.get("target") is not None else []
+    for w in rep["warnings"]: log("LOUDNESS WARNING:", w)
+    return rep
+
+def mux_audio(video_in, audio, out, target, tp, ss=0.0, tt=None, concat=False):
+    """Copy video from video_in, add `audio` (only read), loudness-normalized unless target is None."""
+    import subprocess
+    tt = tt if tt is not None else lv_audio.duration(audio)
+    src = lv_loud.measure(audio, ss=ss, t=tt, I=target if target is not None else lv_loud.DEFAULT_I, TP=tp)
+    lin = target is not None and lv_loud.linear_ok(src, target, tp)
+    if target is not None:
+        af = lv_loud.filter_for(src, target, tp)
+        if not lin: log(f"loudness: {target} LUFS needs limiting (source peak {src['TP']} dBTP), loudnorm uses dynamic mode")
+    else: af = "aresample=48000:resampler=soxr"
+    vin = (["-f", "concat", "-safe", "0"] if concat else []) + ["-i", video_in]
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", *vin, "-ss", str(ss), "-t", str(tt), "-i", audio,
+                    "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-af", af, "-ar", "48000", "-c:a", "aac", "-b:a", "320k",
+                    "-t", str(tt), "-movflags", "+faststart", out], check=True)
+    return dict(target=target, true_peak=tp, linear=lin, source=src)
 
 def subprocess_duration(video, sel):
     import subprocess
@@ -185,8 +213,18 @@ def main():
     r.add_argument("--preset", default="minimal"); r.add_argument("--out", required=True); r.add_argument("--title", default="")
     r.add_argument("--bpm", type=float); r.add_argument("--workers", type=int, default=4); r.add_argument("--work")
     r.add_argument("--test", help="render only START:END seconds (no flash/duration gate)"); r.add_argument("--stills", default="")
-    r.add_argument("--crf", type=int, default=21); r.add_argument("--realign", action="store_true")
+    r.add_argument("--crf", type=int, default=16); r.add_argument("--x264-preset", default="slow")
+    r.add_argument("--maxrate", default="", help="optional VBV cap, e.g. 20M (default: uncapped CRF)")
+    r.add_argument("--width", type=int, default=1920); r.add_argument("--height", type=int, default=1080); r.add_argument("--realign", action="store_true")
     r.add_argument("--scenes", help="per-line scene file (.py or .json) used by the lineart preset")
+    def add_loud(q):
+        q.add_argument("--loudness", type=lv_loud.parse_target, default=lv_loud.DEFAULT_I, metavar="LUFS|off",
+                       help="integrated loudness target at mux (default -14, YouTube); 'off' keeps the source level")
+        q.add_argument("--true-peak", type=float, default=lv_loud.DEFAULT_TP, metavar="DBTP", help="true-peak ceiling (default -1)")
+    add_loud(r)
+    rm = sub.add_parser("remux"); add_loud(rm); rm.add_argument("--video", required=True); rm.add_argument("--audio", required=True)
+    rm.add_argument("--out", required=True); rm.add_argument("--check-json", default="", help="default: <out>_check.json")
+    rm.add_argument("--no-flash", action="store_true", help="skip the flash check (video stream is copied unchanged)")
     a = sub.add_parser("align", parents=[fonts]); a.add_argument("--audio", required=True); a.add_argument("--lyrics", required=True); a.add_argument("--work", required=True)
     s = sub.add_parser("stills", parents=[fonts]); s.add_argument("--job", required=True); s.add_argument("--times", required=True); s.add_argument("--outdir")
     c = sub.add_parser("check", parents=[fonts]); c.add_argument("--video", required=True); c.add_argument("--audio", required=True)
@@ -209,6 +247,12 @@ def main():
 
     if A.cmd == "_segment":
         lv_render.render_segment(json.load(open(A.job)), A.a, A.b, A.out); return
+    if A.cmd == "remux":
+        if os.path.abspath(A.out) in (os.path.abspath(A.audio), os.path.abspath(A.video)): sys.exit("--out must be a new file")
+        loud = mux_audio(A.video, A.audio, A.out, A.loudness, A.true_peak)
+        res = check(A.out, A.audio, loud, flash=not A.no_flash)
+        cj = A.check_json or os.path.splitext(A.out)[0] + "_check.json"; json.dump(res, open(cj, "w"), indent=1)
+        log(json.dumps(res)); sys.exit(0 if res["duration_ok"] and (A.no_flash or not fail_flash(res)) else 1)
     if A.cmd == "align": do_align(A.audio, A.lyrics, A.work, True); return
     if A.cmd == "check":
         res = check(A.video, A.audio); print(json.dumps(res, indent=1))
@@ -247,14 +291,15 @@ def main():
     # ---- run ----
     import subprocess
     t0 = time.time(); name = os.path.splitext(os.path.basename(A.out))[0]
-    work = A.work or os.path.join(os.path.dirname(os.path.abspath(A.out)), "_work_" + name); os.makedirs(work, exist_ok=True)
+    work = os.path.abspath(A.work) if A.work else os.path.join(os.path.dirname(os.path.abspath(A.out)), "_work_" + name); os.makedirs(work, exist_ok=True)
     audio = os.path.abspath(A.audio)
     do_align(audio, A.lyrics, work, A.realign)
     bj = os.path.join(work, "beats.json")
     if not os.path.exists(bj) or A.realign: json.dump(lv_audio.beats(audio, 30, A.bpm), open(bj, "w"))
     preset = A.scenes if A.scenes else A.preset
     job = dict(audio=audio, lines=os.path.join(work, "lines.json"), beats=bj, preset=preset, title=A.title,
-               work=work, crf=A.crf, preset_opts=parse_opts(A.preset_opts))
+               work=work, crf=A.crf, x264_preset=A.x264_preset, maxrate=A.maxrate or None,
+               width=A.width, height=A.height, preset_opts=parse_opts(A.preset_opts))
     if A.scenes: job["scenes"] = os.path.abspath(A.scenes)
     jp = os.path.join(work, "job.json"); json.dump(job, open(jp, "w"), indent=1)
     dur = lv_audio.duration(audio); NF = int(math.ceil(dur * 30))
@@ -271,8 +316,7 @@ def main():
     lst = os.path.join(work, "segs.txt"); open(lst, "w").write("".join(f"file '{s}'\n" for s in segs))
     out = A.out if not A.test else A.out.replace(".mp4", f"_test{int(a0/30)}-{int(a1/30)}.mp4")
     ss, tt = a0 / 30, (a1 - a0) / 30 if A.test else dur
-    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", lst, "-ss", str(ss), "-t", str(tt), "-i", audio,
-                    "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t", str(tt), "-movflags", "+faststart", out], check=True)
+    loud = mux_audio(lst, audio, out, A.loudness, A.true_peak, ss=ss, tt=tt, concat=True)
     for s_ in segs: os.remove(s_)
     os.remove(lst)
     log("wrote", out, f"{time.time() - t0:.0f}s")
@@ -280,7 +324,7 @@ def main():
         ps = lv_render.stills(job, [float(x) for x in A.stills.split(",")], os.path.join(work, "stills"))
         log("sheet", contact_sheet(ps, os.path.join(work, "stills", "sheet.png")))
     if not A.test:
-        res = check(out, audio); json.dump(res, open(os.path.join(work, "check.json"), "w"), indent=1)
+        res = check(out, audio, loud); json.dump(res, open(os.path.join(work, "check.json"), "w"), indent=1)
         log(json.dumps(res))
         if fail_flash(res) or not res["duration_ok"]:
             if not res["duration_ok"]: log("DURATION MISMATCH")

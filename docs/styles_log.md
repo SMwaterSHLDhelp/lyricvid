@@ -29,3 +29,9 @@ These are demos of the API. A song may reuse a *block*, not the whole row.
 | postcard | warm sheet, brown ink | Patrick Hand | center | drift, wave | JSON twin of the paper idea |
 | normaltech | near-black, bone, amber, cyan | Archivo Black | lower third | line-art draw-on, 0.7 s crossfade, slow push-in | one scene per line; section cards; keyword accent |
 | desk | same line-art palette | Archivo Black | lower third | template scenes | JSON scene spec |
+
+## Shipped songs
+
+| name | palette | type | layout | motion | notes |
+| --- | --- | --- | --- | --- | --- |
+| skeletoncrew | night purple gradient `#140A2A→#461E64`, pumpkin `#FF8C24`, slime `#82E854` (sung), moonlight `#F0EED0`, plum outlines `#1E0C2C` | Luckiest Guy (lyrics, plum stroke), Creepster (title, section cards) | lower band, rounded plum pill | flat cut-paper "sticker-book" cartoons, one acted-out scene per line, 0.8 s scene crossfade, characters bounce on beats, bar-length camera sway, drifting fog, gliding bats, ease-out-back pop-ins | `presets/skeletoncrew.py`, Skeleton Crew (Halloween house dance-pop, 124 BPM). Filled shapes, not line-art; not the doompop HUD. |

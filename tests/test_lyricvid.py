@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetic checks: alignment chunks, the safety clamp, word spacing, and a flash/contrast pass per preset.
+"""Synthetic checks: alignment chunks, loudness normalization, the safety clamp, word spacing, and a flash/contrast pass per preset.
 
     python3 tests/test_lyricvid.py            # unit checks + every example preset
     python3 tests/test_lyricvid.py --quick    # unit checks and one frame of line-art
@@ -145,8 +145,37 @@ def test_all_presets():
     assert not fails, fails
     print("PASS all presets", len(rows))
 
+def test_loudness():
+    """Quiet synthetic song -> remux at -14 LUFS: source untouched, sync kept, target and peak met."""
+    import hashlib, json, lv_loud
+    d = tempfile.mkdtemp()
+    wav, vid, out = (os.path.join(d, n) for n in ("song.wav", "v.mp4", "out.mp4"))
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=12:sample_rate=44100",
+                    "-f", "lavfi", "-i", "anoisesrc=d=12:a=0.05:r=44100", "-filter_complex", "[0][1]amix=2,volume=0.3",
+                    "-c:a", "pcm_s24le", wav], check=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=160x90:r=30:d=12",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", vid], check=True)
+    md5 = hashlib.md5(open(wav, "rb").read()).hexdigest()
+    assert lv_loud.parse_target("off") is None and lv_loud.parse_target("-16") == -16.0
+    assert lv_loud.evaluate(dict(I=-14.4, TP=-1.2)) == [] and len(lv_loud.evaluate(dict(I=-16.0, TP=-0.5))) == 2
+    r = subprocess.run([sys.executable, "lyricvid.py", "remux", "--video", vid, "--audio", wav, "--out", out, "--no-flash"])
+    assert r.returncode == 0
+    assert hashlib.md5(open(wav, "rb").read()).hexdigest() == md5, "source audio modified"
+    res = json.load(open(os.path.join(d, "out_check.json")))
+    L = res["loudness"]
+    assert res["duration_ok"], res
+    assert L["source"]["I"] < -20 and abs(L["final"]["I"] + 14) <= 1 and L["final"]["TP"] <= -0.95 and not L["warnings"], L
+    sr = subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=sample_rate,codec_name",
+                                  "-of", "csv=p=0", out]).decode().strip()
+    assert sr == "aac,48000", sr
+    off = os.path.join(d, "off.mp4")
+    subprocess.run([sys.executable, "lyricvid.py", "remux", "--video", vid, "--audio", wav, "--out", off, "--no-flash", "--loudness", "off"], check=True)
+    Lo = json.load(open(os.path.join(d, "off_check.json")))["loudness"]
+    assert Lo["target"] is None and abs(Lo["final"]["I"] - Lo["source"]["I"]) < 0.5, Lo
+    print("PASS loudness", L["source"]["I"], "->", L["final"]["I"], "LUFS, TP", L["final"]["TP"])
+
 def main():
-    test_chunks(); test_guard(); test_spacing(); test_keywords_and_scenes()
+    test_chunks(); test_guard(); test_spacing(); test_keywords_and_scenes(); test_loudness()
     if "--quick" not in sys.argv:
         test_all_presets()
     print("OK")

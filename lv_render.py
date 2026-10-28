@@ -462,7 +462,7 @@ class Ctx:
         sx, sy = kin["sx"], kin["sy"]
         if sx > 1: sx = 1  # hard guard: horizontal growth collides with the next word
         if abs(sx - 1) > 0.01 or abs(sy - 1) > 0.01:
-            im = im.resize((max(1, int(im.width * sx)), max(1, int(im.height * sy))), Image.BILINEAR)
+            im = im.resize((max(1, int(im.width * sx)), max(1, int(im.height * sy))), Image.BICUBIC)
         if kin["clip"] < 0.999:
             reveal = int(it["pad"] * sx + it["w"] * kin["clip"] + int(self.S.get("stroke", 0) or 0))
             shown = Image.new("RGBA", im.size, (0, 0, 0, 0))
@@ -623,18 +623,20 @@ class Ctx:
         if not isinstance(bg, Image.Image):
             raise TypeError("Preset.background must return a PIL image")
         if bg.mode != "RGBA": bg = bg.convert("RGBA")
-        if bg.size != (self.SW, self.SH): bg = bg.resize((self.SW, self.SH), Image.BILINEAR)
+        if bg.size != (self.SW, self.SH): bg = bg.resize((self.SW, self.SH), Image.LANCZOS)
         cam = self.preset.camera(t, st) if hasattr(self.preset, "camera") else (0, 0, 1, 0)
         if cam is None: cam = (0, 0, 1, 0)
         z = cam[2] * (1 + S.get("punch", 0.02) * st["pulse"] * (1.35 if st["hook"] else 1) + 0.006 * st["on"]) * 1.04
         z = max(1.02, z)
         amp = S.get("shake", 1.4) * (min(st["on"], 1.2) + st["pulse"]) * (1.25 if st["hook"] else 1)
         rnd = random.Random(k); sx, sy = rnd.uniform(-1, 1) * amp, rnd.uniform(-1, 1) * amp
-        if cam[3]: bg = bg.rotate(cam[3], resample=Image.BILINEAR, center=(self.SW / 2, self.SH / 2))
+        if cam[3]: bg = bg.rotate(cam[3], resample=Image.BICUBIC, center=(self.SW / 2, self.SH / 2))
         cw, ch = self.SW / z, self.SH / z
         cx = min(max(self.SW / 2 + cam[0] + sx, cw / 2), self.SW - cw / 2)
         cy = min(max(self.SH / 2 + cam[1] + sy, ch / 2), self.SH - ch / 2)
-        fr = bg.convert("RGB").resize((self.W, self.H), Image.BILINEAR,
+        # Lanczos: when bg_size is larger than the output (supersampled presets) this is a proper
+        # anti-aliased downscale; a bilinear resize of a low-res plate was the old "jaggy/blurry" look.
+        fr = bg.convert("RGB").resize((self.W, self.H), Image.LANCZOS, reducing_gap=3.0 if cw > self.W * 1.5 else None,
                                       box=(cx - cw / 2, cy - ch / 2, cx + cw / 2, cy + ch / 2)).convert("RGBA")
         if hasattr(self.preset, "overlay"): self.preset.overlay(fr, t, st)
         if self.title: self.draw_title(fr, t, st)
@@ -653,11 +655,14 @@ class Ctx:
 
 def render_segment(job, a, b, out):
     ctx = Ctx(job); b = min(b, ctx.NF)
+    enc = ["-c:v", "libx264", "-preset", job.get("x264_preset", "slow"), "-crf", str(job.get("crf", 16)),
+           "-profile:v", "high", "-tune", job.get("x264_tune", "animation"), "-pix_fmt", "yuv420p",
+           "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]
+    if job.get("maxrate"): enc += ["-maxrate", job["maxrate"], "-bufsize", job.get("bufsize", job["maxrate"])]
     ff = subprocess.Popen(["ffmpeg", "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
-                           "-s", f"{ctx.W}x{ctx.H}", "-r", str(ctx.FPS), "-i", "-",
-                           "-an", "-c:v", "libx264", "-preset", job.get("x264_preset", "medium"),
-                           "-crf", str(job.get("crf", 21)), "-maxrate", job.get("maxrate", "4M"),
-                           "-bufsize", "8M", "-pix_fmt", "yuv420p", out], stdin=subprocess.PIPE)
+                           "-s", f"{ctx.W}x{ctx.H}", "-r", str(ctx.FPS), "-i", "-", "-an",
+                           "-vf", "scale=out_color_matrix=bt709:flags=lanczos+accurate_rnd+full_chroma_int"] + enc + [out],
+                          stdin=subprocess.PIPE)
     for k in range(a, b): ff.stdin.write(ctx.frame(k).tobytes())
     ff.stdin.close(); rc = ff.wait()
     if rc != 0: raise RuntimeError(f"ffmpeg segment exited {rc}")
@@ -667,5 +672,6 @@ def stills(job, times, outdir, prefix="frame"):
     ctx = Ctx(job); os.makedirs(outdir, exist_ok=True); paths = []
     for t in times:
         p = os.path.join(outdir, f"{prefix}_{t:07.2f}.png")
+        ctx.guard = Guard()  # each still is independent; do not blend with the previous still
         ctx.frame(int(round(t * ctx.FPS))).save(p); paths.append(p)
     return paths
